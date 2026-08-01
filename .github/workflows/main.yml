@@ -90,7 +90,7 @@ jobs:
             throw "Tailscale IP not assigned."
           }
 
-          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8V
+          Add-Content -Path $env:GITHUB_ENV -Value "TAILSCALE_IP=$tsIP"
       
       - name: Verify RDP Accessibility
         run: |
