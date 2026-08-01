@@ -58,33 +58,39 @@ jobs:
           }
 
       - name: Install Tailscale
+        shell: powershell
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP	ailscale.msi"
-          
+          $installerPath = Join-Path $env:TEMP "tailscale.msi"
+
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Start-Process msiexec.exe -ArgumentList @(
+            "/i",
+            $installerPath,
+            "/quiet",
+            "/norestart"
+          ) -Wait
+
           Remove-Item $installerPath -Force
 
       - name: Establish Tailscale Connection
+        shell: powershell
         run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale	ailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
+          $tsExe = Join-Path $env:ProgramFiles "Tailscale\\tailscale.exe"
+
+          & $tsExe up --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" --hostname="gh-runner-$env:GITHUB_RUN_ID"
+
           $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale	ailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
+          for ($i = 0; $i -lt 10 -and -not $tsIP; $i++) {
+            $tsIP = (& $tsExe ip -4 | Select-Object -First 1).Trim()
+            if (-not $tsIP) { Start-Sleep -Seconds 5 }
           }
-          
+
           if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
+            throw "Tailscale IP not assigned."
           }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8V
       
       - name: Verify RDP Accessibility
         run: |
