@@ -1,74 +1,50 @@
-name: macOS SSH via Bore
+name: RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  ssh-bore:
-    runs-on: macos-26 # Or macos-latest
-    timeout-minutes: 60
+  secure-rdp:
+    runs-on: windows-11
+    timeout-minutes: 3600
 
     steps:
-      - name: Enable SSH & Create User
+      - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Login (SSH)
-          sudo systemsetup -setremotelogin on
-          
-          # Generate Credentials
-          USERNAME="runner"
-          PASSWORD=$(openssl rand -base64 12)
-          
-          # Create User
-          sudo sysadminctl -addUser "$USERNAME" -fullName "Runner User" -password "$PASSWORD"
-          sudo dseditgroup -o edit -a "$USERNAME" -t user admin
-          
-          echo "SSH_USER=$USERNAME" >> $GITHUB_ENV
-          echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
 
-      - name: Install Bore
-        run: |
-          # Install bore via cargo (Rust) or download binary
-          # Using pre-built binary for speed on macOS
-          curl -L -o /tmp/bore.tar.gz https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-apple-darwin.tar.gz
-          tar -xzf /tmp/bore.tar.gz -C /tmp
-          sudo mv /tmp/bore /usr/local/bin/bore
-          chmod +x /usr/local/bin/bore
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          
+          # For testing, allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
 
-      - name: Start Bore Tunnel
-        run: |
-          # Start bore tunneling local port 22 to bore.pub in background
-          # It will output the public address (e.g., bore.pub:12345)
-          bore local 22 --to bore.pub > bore.log 2>&1 &
-          
-          # Wait for tunnel to start
-          sleep 3
-          
-          # Extract the assigned port from the log
-          # Log format: "listening on port 12345" or similar
-          BORE_PORT=$(grep -o 'listening on port [0-9]*' bore.log | grep -o '[0-9]*' | head -n 1)
-          
-          if [ -z "$BORE_PORT" ]; then
-            echo "Failed to start bore tunnel"
-            cat bore.log
-            exit 1
-          fi
-          
-          echo "BORE_PORT=$BORE_PORT" >> $GITHUB_ENV
-          echo "BORE_HOST=bore.pub" >> $GITHUB_ENV
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
 
-      - name: Display Connection Details
+      - name: Create RDP User with Specific Password
         run: |
-          echo "=========================================="
-          echo "  macOS SSH ACCESS (via Bore)"
-          echo "=========================================="
-          echo "  Host: $BORE_HOST"
-          echo "  Port: $BORE_PORT"
-          echo "  User: $SSH_USER"
-          echo "  Pass: $SSH_PASS"
-          echo ""
-          echo "  Connect command:"
-          echo "  ssh -p $BORE_PORT $SSH_USER@$BORE_HOST"
-          echo "=========================================="
+          # Define the specific password
+          $password = "0497"
           
-          # Keep workflow alive
-          while true; do sleep 60; done   
+          # Convert to SecureString
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          # Create the user "RDP" with the specific password
+          # -AccountNeverExpires ensures the account stays active
+          # -PasswordNeverExpires prevents Windows from forcing a change
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+          
+          # Add user to necessary groups for RDP and Admin access
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          
+          # Output credentials to the workflow log
+          echo "RDP_CREDS=User: RDP | Pa   
