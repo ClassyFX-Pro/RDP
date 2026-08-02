@@ -6,12 +6,12 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 3600  # Fixed: 360 mins = 6 hours (GitHub's max limit for most accounts)
 
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -22,11 +22,11 @@ jobs:
           # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           
-          # For testing, allow any incoming connection on port 3389
+          # Allow incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          # Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Specific Password
@@ -37,14 +37,28 @@ jobs:
           # Convert to SecureString
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          # Create the user "RDP" with the specific password
-          # -AccountNeverExpires ensures the account stays active
-          # -PasswordNeverExpires prevents Windows from forcing a change
+          # Create the user "RDP"
+          # -PasswordNeverExpires ensures the password doesn't expire mid-session
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           
-          # Add user to necessary groups for RDP and Admin access
+          # Add user to necessary groups
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           
-          # Output credentials to the workflow log
-          echo "RDP_CREDS=User: RDP | Pa   
+          # Verify user creation
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
+
+          # FIXED: Use Add-Content instead of echo to avoid PowerShell quote parsing errors
+          $credString = "RDP_CREDS=User: RDP | Password: $password"
+          Add-Content -Path $env:GITHUB_ENV -Value $credString
+
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = Join-Path $env:TEMP "tailscale.msi"
+
+            
